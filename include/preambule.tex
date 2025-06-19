@@ -16,7 +16,7 @@
 %% Шрифты
 \usepackage{euscript}	 % шрифт "Евклид"
 \usepackage{mathrsfs}    % красивый мат. шрифт
-
+\usepackage{setspace}
 %% Некоторые полезные макросы для дебага (в случае недоверия авторам шаблона)
 \makeatletter
 \newcommand\thefontsize{The current font size is: \f@size pt} % пример: \section{\thefontsize}
@@ -25,7 +25,7 @@
 %% Настройка размеров шрифтов
 \makeatletter
 \setlength{\headheight}{28pt}
-%% TODO: мне не удалось разобраться, как грамотно подбирать второе число в 
+%% TODO: мне не удалось разобраться, как грамотно подбирать второе число в
 %% \@setfontsize\*, но ряд эксппериментов показывает, что "10" выравнивает текст весьма прилично :)
 \renewcommand\Huge{\@setfontsize\Huge{14pt}{10}}
 \renewcommand\huge{\@setfontsize\huge{14pt}{10}}
@@ -90,3 +90,42 @@ breaklines=true
 
 % Отступ перед первым абзацем в каждом разделе
 \usepackage{indentfirst}
+
+\usepackage[russian]{babel}
+\usepackage{geometry}
+\geometry{left=3cm,right=1.5cm,top=2cm,bottom=2cm}
+
+\usepackage{xcolor}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    numbers=left,
+    inputencoding=utf8,
+    extendedchars=true,
+    showstringspaces=false,
+    commentstyle=\color{green!50!black}\itshape,
+    keywordstyle=\color{blue},
+    stringstyle=\color{red},
+    keepspaces=true,          % Сохраняет пробелы в комментариях
+    tabsize=4,
+    columns=fixed
+}
+
+\usepackage{titlesec}
+
+% Настройка размеров (можно использовать конкретные pt)
+\titleformat{\section}
+  {\normalfont\fontsize{16}{19}\bfseries}{\thesection}{1em}{}
+
+\titleformat{\subsection}
+  {\normalfont\fontsize{14}{17}\bfseries}{\thesubsection}{1em}{}
+
+\titleformat{\subsubsection}
+  {\normalfont\fontsize{14}{15}\bfseries}{\thesubsubsection}{1em}{}
+
+% Интервалы вокруг заголовков
+\titlespacing*{\section}{0pt}{12pt}{6pt}
+\titlespacing*{\subsection}{0pt}{10pt}{4pt}
+\titlespacing*{\subsubsection}{0pt}{10pt}{4pt}

@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
   echo "./configure.sh must be run under root!"
   exit
 fi
