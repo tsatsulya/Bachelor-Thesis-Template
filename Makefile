@@ -12,7 +12,7 @@ PARTS = parts/*.tex
 MAIN = main.tex
 
 %.pdf: $(MAIN) $(PARTS) $(INCLUDES)
-	latexrun/latexrun $*
+	latexrun/latexrun --latex-args="-shell-escape" $*
 
 clean:
 # this is a bad practice, of course, but it's enough for our purposes

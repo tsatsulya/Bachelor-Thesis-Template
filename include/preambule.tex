@@ -1,7 +1,7 @@
 %% Работа с русским языком
 \usepackage{cmap}			 % поиск в PDF
 \usepackage{mathtext} 		 % русские буквы в формулах
-\usepackage[T2A]{fontenc}	 % кодировка
+\usepackage[T1,T2A]{fontenc}
 \usepackage[utf8]{inputenc}	 % кодировка исходного текста
 \usepackage[russian]{babel}	 % локализация и переносы
 
@@ -79,11 +79,6 @@
 \usepackage{gensymb} % красивые градусы
 \usepackage{caption} % пакет для подписей к рисункам, в частности, для работы caption*
 \usepackage{listings} % пакет для листингов с кодом
-\lstset{              % настройки для лисингов с кодом
-basicstyle=\small\ttfamily,
-columns=flexible,
-breaklines=true
-}
 
 % Hyperref (для ссылок внутри  pdf)
 \usepackage[unicode, pdftex]{hyperref}
@@ -97,30 +92,14 @@ breaklines=true
 
 \usepackage{xcolor}
 
-\lstset{
-    basicstyle=\ttfamily\small,
-    breaklines=true,
-    frame=single,
-    numbers=left,
-    inputencoding=utf8,
-    extendedchars=true,
-    showstringspaces=false,
-    commentstyle=\color{green!50!black}\itshape,
-    keywordstyle=\color{blue},
-    stringstyle=\color{red},
-    keepspaces=true,          % Сохраняет пробелы в комментариях
-    tabsize=4,
-    columns=fixed
-}
-
 \usepackage{titlesec}
 
 % Настройка размеров (можно использовать конкретные pt)
 \titleformat{\section}
-  {\normalfont\fontsize{16}{19}\bfseries}{\thesection}{1em}{}
+  {\normalfont\fontsize{17}{19}\bfseries}{\thesection}{1em}{}
 
 \titleformat{\subsection}
-  {\normalfont\fontsize{14}{17}\bfseries}{\thesubsection}{1em}{}
+  {\normalfont\fontsize{16}{17}\bfseries}{\thesubsection}{1em}{}
 
 \titleformat{\subsubsection}
   {\normalfont\fontsize{14}{15}\bfseries}{\thesubsubsection}{1em}{}
@@ -134,8 +113,6 @@ breaklines=true
 \definecolor{codegray}{rgb}{0.5,0.5,0.5}
 \definecolor{codepurple}{rgb}{0.58,0,0.82}
 
-\usepackage[T2A]{fontenc}
-\usepackage[utf8]{inputenc}
 
 \lstdefinestyle{mystyle}{
     commentstyle=\color{codegreen},
@@ -153,8 +130,11 @@ breaklines=true
     showstringspaces=false,
     showtabs=false,
     tabsize=2,
-    frame=single
-}
+    frame=lines,
+    inputencoding=utf8, % Указываем, что входной код в UTF-8
+    extendedchars=\true,
+    }
+
 
 \lstset{style=mystyle}
 \newcommand{\code}[1]{\texttt{#1}}
