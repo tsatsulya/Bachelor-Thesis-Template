@@ -769,6 +769,292 @@ static To CastValTo(const ir::Literal *lit)
 
 Оптимизация unboxing важна для производительности, так как позволяет избежать накладных расходов на работу с объектами-обертками там, где можно использовать примитивные типы напрямую.
 
+
+# Детальный анализ кода оптимизации unboxing в компиляторе Ark
+
+## Глубокий разбор архитектуры и алгоритмов
+
+### 1. Система типов и анализ возможностей unboxing
+
+Код реализует сложную логику работы с системой типов ETS (Extended TypeScript), включая:
+
+**Типовая иерархия:**
+- Примитивные типы (ETSPrimitiveType): byte, short, int, long, float, double, char, boolean
+- Объекты-обертки (ETSObjectType с флагом BoxedPrimitive)
+- Составные типы: массивы, кортежи, объединения
+
+**Ключевые функции анализа:**
+```cpp
+static bool IsRecursivelyUnboxed(checker::Type *t) {
+    return t->IsETSPrimitiveType() || IsRecursivelyUnboxedReference(t);
+}
+
+static bool IsRecursivelyUnboxedReference(checker::Type *t) {
+    return (t->IsETSTupleType() && ...) ||
+           (t->IsETSArrayType() && ...) ||
+           (t->IsETSUnionType() && ...) ||
+           (t->IsETSObjectType() && ...);
+}
+```
+
+Функции рекурсивно проверяют, может ли тип быть разобранным, включая анализ:
+- Элементов кортежей
+- Элементов массивов
+- Составляющих объединений типов
+- Аргументов шаблонных типов
+
+### 2. Механизм нормализации типов
+
+Процесс нормализации реализован через серию взаимно рекурсивных функций:
+
+```cpp
+static checker::Type *NormalizeType(UnboxContext *uctx, checker::Type *tp, TypeIdStorage *alreadySeen) {
+    if (alreadySeen == nullptr) {
+        TypeIdStorage newAlreadySeen {};
+        return MaybeRecursivelyUnboxReferenceType(uctx, tp, &newAlreadySeen);
+    }
+    return MaybeRecursivelyUnboxReferenceType(uctx, tp, alreadySeen);
+}
+```
+
+Особенности реализации:
+- Использование `TypeIdStorage` для отслеживания обработанных типов и предотвращения бесконечной рекурсии
+- Раздельная обработка различных категорий типов
+- Сохранение оригинального типа, если преобразование не требуется
+
+### 3. Обработка AST (Abstract Syntax Tree)
+
+**Основные этапы обработки:**
+1. Нормализация всех типов в AST (`NormalizeAllTypes`)
+2. Обновление объявлений (`HandleDeclarationNode`)
+3. Преобразование выражений (`UnboxVisitor`)
+
+**Ключевые методы обработки узлов AST:**
+```cpp
+void VisitCallExpression(ir::CallExpression *call) override {
+    // Специальная обработка вызовов JS функций
+    if (!call->Signature()->HasFunction() || call->Signature()->Function()->Language() == Language::Id::JS) {
+        // Все аргументы должны быть boxed
+        for (size_t i = 0; i < call->Arguments().size(); i++) {
+            call->Arguments()[i] = AdjustType(uctx_, arg, uctx_->checker->MaybeBoxType(arg->TsType()));
+        }
+        return;
+    }
+    // Обработка остальных случаев...
+}
+```
+
+### 4. Вставка операций преобразования
+
+**Три основных вида преобразований:**
+1. **Unboxing** - преобразование объекта-обертки в примитив
+```cpp
+static ir::Expression *InsertUnboxing(UnboxContext *uctx, ir::Expression *expr) {
+    auto *boxedType = expr->TsType();
+    auto *unboxedType = MaybeRecursivelyUnboxType(uctx, boxedType);
+    // Создание вызова метода unboxed()
+    auto *methodId = allocator->New<ir::Identifier>(UNBOXER_METHOD_NAME, allocator);
+    auto *mexpr = ...; // MemberExpression для доступа к методу
+    auto *call = ...;  // CallExpression для вызова метода
+    // Настройка типов и сигнатур...
+    return call;
+}
+```
+
+2. **Boxing** - создание объекта-обертки для примитива
+```cpp
+static ir::Expression *InsertBoxing(UnboxContext *uctx, ir::Expression *expr) {
+    auto *unboxedType = expr->TsType();
+    auto *boxedType = uctx->checker->MaybeBoxType(unboxedType);
+    // Создание выражения new BoxedType(unboxedValue)
+    auto *constrCall = ...; // ETSNewClassInstanceExpression
+    // Поиск подходящего конструктора
+    // Настройка типов и сигнатур...
+    return constrCall;
+}
+```
+
+3. **Преобразование между примитивами** - через intrinsic-функции
+```cpp
+static ir::Expression *CreateToIntrinsicCallExpression(...) {
+    // Создание вызова статического метода преобразования
+    // Например: Number.toInt(value), Number.toDouble(value) и т.д.
+}
+```
+
+### 5. Особые случаи и оптимизации
+
+**Оптимизация цепочек преобразований:**
+```cpp
+// Избегание избыточных преобразований
+if (CheckIfOnTopOfUnboxing(uctx, expr, boxedType)) {
+    return LinkUnboxingExpr(expr, parent);
+}
+```
+
+**Обработка литералов:**
+```cpp
+static ir::Expression *PerformLiteralConversion(...) {
+    // Прямое преобразование литералов без создания временных переменных
+    if (expectedType->IsByteType()) {
+        num = lexer::Number {isInt ? (int8_t)longValue : (int8_t)doubleValue};
+    } else if (expectedType->IsShortType()) {
+        // ... и так для всех примитивных типов
+    }
+}
+```
+
+**Специальная обработка встроенных методов:**
+```cpp
+// Особый случай для valueOf() в boxed типах
+if (func->Parent()->Parent()->IsMethodDefinition() &&
+    func->Parent()->Parent()->AsMethodDefinition()->Id()->Name() == "valueOf") {
+    // Сохраняем boxed тип возвращаемого значения
+    auto *boxed = func->Parent()->Parent()->Parent()->AsTyped()->TsType();
+    auto *unboxed = MaybeRecursivelyUnboxType(uctx, boxed);
+    // ... специальная обработка сигнатуры
+}
+```
+
+### 6. Управление памятью и производительность
+
+**Использование ArenaAllocator:**
+- Все временные объекты создаются через ArenaAllocator
+- Эффективное управление памятью для часто создаваемых временных объектов
+
+```cpp
+explicit UnboxContext(public_lib::Context *ctx)
+    : allocator(ctx->Allocator()),  // Получение аллокатора из контекста
+      handled(ctx->Allocator()->Adapter()) {}
+```
+
+**Оптимизации обхода AST:**
+- Использование итераторов вместо рекурсии где возможно
+- Локальное кэширование уже обработанных узлов
+- Избегание повторной обработки через множество `handled`
+
+### 7. Обработка сложных языковых конструкций
+
+**Генетики и параметры типов:**
+```cpp
+static checker::Type *MaybeRecursivelyUnboxTypeParameter(...) {
+    /* Любая рекурсия включает параметры типов */
+    if (std::find(alreadySeen->begin(), alreadySeen->end(), t->Id()) != alreadySeen->end()) {
+        return t;
+    }
+    alreadySeen->push_back(t->Id());
+    // Рекурсивная обработка constraint-типа
+    auto typeParameter = t->AsETSTypeParameter();
+    auto constraintType = typeParameter->GetConstraintType();
+    typeParameter->SetConstraintType(MaybeRecursivelyUnboxReferenceType(uctx, constraintType, alreadySeen));
+    return t;
+}
+```
+
+**Лямбда-выражения и функциональные типы:**
+- Специальная обработка для функциональных ссылок
+- Учет контекста this в методах
+
+**Аннотации и внешние модули:**
+```cpp
+template <bool PROG_IS_EXTERNAL = false>
+static void VisitExternalPrograms(UnboxVisitor *visitor, parser::Program *program) {
+    // Рекурсивная обработка внешних программ
+    // Особые правила для аннотаций
+}
+```
+
+Реализованная оптимизация представляет собой систему преобразования типов, которая рекурсивно анализирует и модифицирует абстрактное синтаксическое дерево для выполнения операций unboxing (распаковки) и boxing (упаковки) типов.
+Рекурсивный анализ дерева проводится с помощью специального класса UnboxVisitor, реализующего методы VisitX для различных типов узлов AST. Его задачи:
+1) Обойти AST и найти места, где можно заменить boxed-типы на примитивы.
+2) Вставить явные преобразования (например, вызовы unboxed(), valueOf(), intrinsic-функции).
+3) Обновить соответствующие типы в выражениях, объявлениях и сигнатурах.
+4) Заново запустить функцию валидации ноды
+
+Примеры обрабатываемых узлов:
+
+    VisitCallExpression — вызовы функций
+    VisitBinaryExpression — бинарные операции (+, ==, && и т. д.)
+    VisitMemberExpression — доступ к полям/методам (obj.field, arr[index])
+    VisitReturnStatement — возвращаемые значения
+    VisitVariableDeclarator — объявления переменных
+
+Механизм работы Visitor'ов
+    Каждый узел AST (например, CallExpression, BinaryExpression) имеет метод Accept(visitor).
+    При вызове astNode->Accept(visitor) управление передаётся в соответствующий метод VisitX у UnboxVisitor.
+
+Пример обработки CallExpression
+```
+void VisitCallExpression(ir::CallExpression *call) override {
+    // 1. Обновление типов аргументов
+    for (size_t i = 0; i < call->Arguments().size(); i++) {
+        auto *arg = call->Arguments()[i];
+        auto *expectedType = call->Signature()->Params()[i]->TsType();
+        call->Arguments()[i] = AdjustType(uctx_, arg, expectedType);
+    }
+
+    // 2. Обновление возвращаемого типа
+    if (call->Signature()->ReturnType()->IsETSPrimitiveType()) {
+        call->SetTsType(call->Signature()->ReturnType());
+    }
+}
+```
+
+Решение о том, нужно ли вставлять boxing, unboxing или конверсию примитивов, принимается с помощью метода AdjustType
+```
+static ir::Expression *AdjustType(UnboxContext *uctx, ir::Expression *expr, checker::Type *expectedType) {
+    // Если выражение — примитив, а ожидается объект → boxing
+    if (expr->TsType()->IsETSPrimitiveType() && expectedType->IsETSObjectType()) {
+        return InsertBoxing(uctx, expr);
+    }
+    // Если выражение — boxed-объект, а нужен примитив → unboxing
+    if (TypeIsBoxedPrimitive(expr->TsType()) && expectedType->IsETSPrimitiveType()) {
+        return InsertUnboxing(uctx, expr);
+    }
+    // Если оба примитива, но разных типов → конверсия (например, int → double)
+    if (expr->TsType()->IsETSPrimitiveType() && expectedType->IsETSPrimitiveType()) {
+        return InsertPrimitiveConversion(uctx, expr, expectedType);
+    }
+    return expr;
+}
+```
+Исходный код (ETS):
+
+let x: Int = 10;  // Integer — boxed-тип
+let y: int = x + 5;   // int — примитив
+
+
+Что делает Visitor:
+
+    Обнаруживает x типа Integer (boxed).
+    В выражении x + 5 требует unboxed-тип (int).
+    Вставляет вызов x.unboxed():
+
+// AST до оптимизации
+BinaryExpression(
+    left: Identifier("x", type=Integer),
+    op: +,
+    right: NumberLiteral(5, type=int)
+)
+
+// AST после VisitBinaryExpression
+BinaryExpression(
+    left: CallExpression(
+        callee: MemberExpression(
+            object: Identifier("x", type=Integer),
+            property: "unboxed"
+        ),
+        type=int
+    ),
+    op: +,
+    right: NumberLiteral(5, type=int)
+)
+
+4. Пример работы
+
+В основном цикле система выполняет следующие действия:
+    Рекурсивно обходит AST программы, анализируя типы каждого узла с помощью функций IsRecursivelyUnboxed и IsUnboxingApplicable. Эти функции определяют, какие типы могут быть преобразованы из объектной формы (boxed) в примитивную (unboxed), включая сложные составные типы (кортежи, массивы, объединения).
+
 Примеры
 *   **3.1 Lack of Uniformity in the Type System**
     *   Primitives are often *not* objects.

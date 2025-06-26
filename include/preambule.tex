@@ -141,3 +141,38 @@
 
 \usetikzlibrary{shapes,arrows,positioning}
 \usepackage{lipsum} % Для демонстрации текста
+
+
+% Определение стиля для TypeScript
+\lstdefinelanguage{TypeScript}{
+    keywords={let, const, type, interface, class, function, return, if, else, for, while, import, export},
+    sensitive=true,
+    comment=[l]{//},
+    morecomment=[s]{/*}{*/},
+    morestring=[b]',
+    morestring=[b]",
+    alsoletter={-},
+    morekeywords=[2]{number, string, boolean, any, void, null, undefined}
+}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{red},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=5pt,
+    backgroundcolor=\color{white},
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    captionpos=b,
+    breaklines=true,
+    breakatwhitespace=true,
+    frame=single,
+    inputencoding=utf8,
+    extendedchars=\true
+}

@@ -15,7 +15,6 @@ int (примитивный) → Int (объектный аналог)
     \item \code{$\langle \langle$} , \code{$\rangle \rangle$} , \code{$\langle \langle$=} , \code{$\rangle \rangle$=}, \code{$\rangle \rangle \rangle$}, \code{$\rangle \rangle \rangle$=}
     \item \code{|} , \code{|=} , \code{\&} , \code{\&=}, \code{\^}, \code{\^}\code{=}, \code{||} , \code{\&\&}
     \item \code{<} , \code{<=} , \code{>}, \code{>=}, \code{==}, \code{===}, \code{!}
-    \item Устранение дуализма типов (как в Java) и проблем упаковки (как в C\#)
 \end{itemize}
 
 В существующей реализации почти в каждой функции проверки производилось безусловное приведение типов операторов к примитивным, поэтому первым этапом работы было удаление или изменение кода, который приводил бы к замене объектных типов на их примитивные аналоги. Далее, основная функция, которая была нужна почти для всех вышеперечисленных операций(исключая логические и унарные) - функция, вычисляющая тип результата бинарного выражения. Ее поведение основывается на иерархии численных типов, оговоренной в спецификации.
@@ -77,7 +76,92 @@ int (примитивный) → Int (объектный аналог)
     \item Обработка деления на ноль
 \end{itemize}
 
-peremer
+\begin{lstlisting}[language=C++,caption=Перечисление рангов типов]
+enum class TypeRank {
+    INT8,
+    INT16,
+    INT32,
+    INT64,
+    FLOAT,
+    DOUBLE,
+    CHAR
+};
+\end{lstlisting}
+
+\subsubsection{Основные функции}
+\begin{lstlisting}[language=C++,caption=GetTypeRank]
+static TypeRank GetTypeRank(const ir::Literal* lit) {
+    if (lit->IsCharLiteral()) {
+        return TypeRank::CHAR;
+    }
+
+    auto num = lit->AsNumberLiteral()->Number();
+    if (num.IsByte()) return TypeRank::INT8;
+    if (num.IsShort()) return TypeRank::INT16;
+    if (num.IsInt()) return TypeRank::INT32;
+    if (num.IsLong()) return TypeRank::INT64;
+    if (num.IsFloat()) return TypeRank::FLOAT;
+    if (num.IsDouble()) return TypeRank::DOUBLE;
+
+    ES2PANDA_UNREACHABLE();
+}
+\end{lstlisting}
+
+\textbf{Получение значения литерала}
+\begin{lstlisting}[language=C++,caption=GetVal]
+template <typename TargetType>
+static TargetType GetVal(const ir::Literal* node) {
+    // Обработка булевых литералов
+    if constexpr (std::is_same_v<TargetType, bool>) {
+        return node->AsBooleanLiteral()->Value();
+    }
+
+    // Обработка символьных литералов
+    if constexpr (std::is_same_v<TargetType, char16_t>) {
+        return node->AsCharLiteral()->Char();
+    }
+
+    auto numNode = node->AsNumberLiteral();
+
+    // Обработка числовых литералов разных типов
+    if constexpr (std::is_same_v<TargetType, int8_t>) {
+        return numNode->Number().GetByte();
+    }
+    if constexpr (std::is_same_v<TargetType, int16_t>) {
+        return numNode->Number().GetShort();
+    }
+    // ...
+    if constexpr (std::is_same_v<TargetType, double>) {
+        return numNode->Number().GetDouble();
+    }
+}
+\end{lstlisting}
+
+\textbf{Преобразование значений между типами}
+\begin{lstlisting}[language=C++,caption=CastValTo]
+template <typename To>
+static To CastValTo(const ir::Literal* lit) {
+    // Обработка булевых литералов
+    if (lit->IsBooleanLiteral()) {
+        return static_cast<To>(GetVal<bool>(lit));
+    }
+
+    // Определение ранга типа и преобразование
+    auto rank = GetTypeRank(lit);
+    switch (rank) {
+        case TypeRank::DOUBLE:
+            return static_cast<To>(GetVal<double>(lit));
+        case TypeRank::FLOAT:
+            return static_cast<To>(GetVal<float>(lit));
+        // ...
+        case TypeRank::CHAR:
+            return static_cast<To>(GetVal<char16_t>(lit));
+    }
+
+    ES2PANDA_UNREACHABLE();
+}
+\end{lstlisting}
+
 
 \subsubsection*{Обработка ошибок}
 \begin{itemize}[label={--}]
@@ -94,4 +178,110 @@ peremer
 \end{itemize}
 
 \subsection{Оптимизация}
+
+
+Реализованная оптимизация представляет собой систему преобразования типов, которая рекурсивно анализирует и модифицирует абстрактное синтаксическое дерево (AST) для выполнения операций nboxing (распаковки) и boxing (упаковки) типов.
+
+\subsection*{Архитектура оптимизации}
+
+\subsubsection{Класс UnboxVisitor}
+Рекурсивный анализ дерева проводится с помощью специального класса \texttt{UnboxVisitor}, реализующего методы \texttt{VisitX} для различных типов узлов AST. Его задачи:
+\begin{enumerate}
+    \item Обойти AST и найти места, где можно заменить boxed-типы на примитивы
+    \item Вставить явные преобразования (например, вызовы \texttt{unboxed()}, \texttt{valueOf()}, intrinsic-функции)
+    \item Обновить соответствующие типы в выражениях, объявлениях и сигнатурах
+    \item Заново запустить функцию валидации ноды
+\end{enumerate}
+
+
+\subsubsection{Обрабатываемые узлы AST}
+Примеры обрабатываемых узлов:
+\begin{itemize}
+    \item \texttt{VisitCallExpression} — вызовы функций
+    \item \texttt{VisitBinaryExpression} — бинарные операции (+, ==, \&\& и т. д.)
+    \item \texttt{VisitMemberExpression} — доступ к полям/методам (\texttt{obj.field}, \texttt{arr[index]})
+    \item \texttt{VisitReturnStatement} — возвращаемые значения
+    \item \texttt{VisitVariableDeclarator} — объявления переменных
+\end{itemize}
+
+\subsubsection{Механизм работы Visitor'ов}
+
+Каждый узел AST имеет метод \texttt{Accept(visitor)}.
+При вызове \texttt{astNode->Accept(visitor)} управление передаётся в соответствующий метод \texttt{VisitX} у UnboxVisitor.
+
+\subsubsection{Пример обработки CallExpression}
+\begin{lstlisting}[language=C++,caption=Обработка вызовов функций]
+void VisitCallExpression(ir::CallExpression *call) override {
+    // 1. Обновление типов аргументов
+    for (size_t i = 0; i < call->Arguments().size(); i++) {
+        auto *arg = call->Arguments()[i];
+        auto *expectedType = call->Signature()->Params()[i]->TsType();
+        call->Arguments()[i] = AdjustType(uctx_, arg, expectedType);
+    }
+
+    // 2. Обновление возвращаемого типа
+    if (call->Signature()->ReturnType()->IsETSPrimitiveType()) {
+        call->SetTsType(call->Signature()->ReturnType());
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Логика преобразования типов}
+Решение о том, нужно ли вставлять boxing, unboxing или конверсию примитивов, принимается с помощью метода AdjustType:
+\begin{lstlisting}[language=C++,caption=Метод AdjustType]
+static ir::Expression *AdjustType(UnboxContext *uctx,
+                                ir::Expression *expr,
+                                checker::Type *expectedType) {
+    // Если выражение — примитив, а ожидается объект → boxing
+    if (expr->TsType()->IsETSPrimitiveType()
+        && expectedType->IsETSObjectType()) {
+        return InsertBoxing(uctx, expr);
+    }
+    // Если выражение — boxed-объект, а нужен примитив → unboxing
+    if (TypeIsBoxedPrimitive(expr->TsType())
+        && expectedType->IsETSPrimitiveType()) {
+        return InsertUnboxing(uctx, expr);
+    }
+    // Если оба примитива, но разных типов → конверсия
+    if (expr->TsType()->IsETSPrimitiveType()
+        && expectedType->IsETSPrimitiveType()) {
+        return InsertPrimitiveConversion(uctx, expr, expectedType);
+    }
+    return expr;
+}
+\end{lstlisting}
+
+\subsubsection{Пример преобразования}
+
+\textbf{Исходный код}
+\begin{lstlisting}[language=TypeScript]
+let x: Int = 10;  // Int — объектный тип
+let y: int = x + 5;   // int — примитив
+\end{lstlisting}
+
+\textbf{Преобразование AST}
+\begin{lstlisting}[caption=AST до оптимизации]
+BinaryExpression(
+    left: Identifier("x", type=Int),
+    op: +,
+    right: NumberLiteral(5, type=int)
+)
+\end{lstlisting}
+
+
+\begin{lstlisting}[caption=AST после оптимизации]
+    BinaryExpression(
+        left: CallExpression(
+            callee: MemberExpression(
+                object: Identifier("x", type=Int),
+                property: "unboxed"
+            ),
+            type=int
+        ),
+        op: +,
+        right: NumberLiteral(5, type=int)
+    )
+\end{lstlisting}
+
+
 \newpage
