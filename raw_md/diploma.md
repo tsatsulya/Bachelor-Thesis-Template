@@ -641,43 +641,26 @@ template <typename TargetType>
 static TargetType GetVal(const ir::Literal *node)
 {
     if constexpr (std::is_same_v<TargetType, bool>) {
-        ES2PANDA_ASSERT(node->IsBooleanLiteral());
         return node->AsBooleanLiteral()->Value();
     }
 
     if constexpr (std::is_same_v<TargetType, char16_t>) {
-        ES2PANDA_ASSERT(node->IsCharLiteral());
         return node->AsCharLiteral()->Char();
     }
 
-    ES2PANDA_ASSERT(node->IsNumberLiteral());
-
     auto numNode = node->AsNumberLiteral();
     if constexpr (std::is_same_v<TargetType, int8_t>) {
-        ES2PANDA_ASSERT(numNode->Number().IsByte());
         return numNode->Number().GetByte();
     }
-    if constexpr (std::is_same_v<TargetType, int16_t>) {
-        ES2PANDA_ASSERT(numNode->Number().IsShort());
-        return numNode->Number().GetShort();
-    }
-    if constexpr (std::is_same_v<TargetType, int32_t>) {
-        ES2PANDA_ASSERT(numNode->Number().IsInt());
-        return numNode->Number().GetInt();
-    }
-    if constexpr (std::is_same_v<TargetType, int64_t>) {
-        ES2PANDA_ASSERT(numNode->Number().IsLong());
-        return numNode->Number().GetLong();
+    // ... остальные типы
     }
     if constexpr (std::is_same_v<TargetType, float>) {
-        ES2PANDA_ASSERT(numNode->Number().IsFloat());
         return numNode->Number().GetFloat();
     }
     if constexpr (std::is_same_v<TargetType, double>) {
-        ES2PANDA_ASSERT(numNode->Number().IsDouble());
         return numNode->Number().GetDouble();
     }
-    ES2PANDA_UNREACHABLE();
+
 }
 
 template <typename To>
@@ -686,9 +669,6 @@ static To CastValTo(const ir::Literal *lit)
     if (lit->IsBooleanLiteral()) {
         return static_cast<To>(GetVal<bool>(lit));
     }
-
-    ES2PANDA_ASSERT(lit->IsNumberLiteral() || lit->IsCharLiteral());
-
     auto rank = GetTypeRank(lit);
     switch (rank) {
         case TypeRank::DOUBLE:
@@ -707,7 +687,7 @@ static To CastValTo(const ir::Literal *lit)
             return static_cast<To>(GetVal<char16_t>(lit));
     }
 
-    ES2PANDA_UNREACHABLE();
+
 }
 
 ```
@@ -756,7 +736,7 @@ static To CastValTo(const ir::Literal *lit)
    - Использование intrinsic-функций для преобразований между примитивами
 
 4. **Работа с системой типов**:
-   - Интеграция с checker'ом типов ETS
+   - Интеграция с checker'ом типов
    - Учет параметров типов и ограничений
    - Обработка объединений типов и кортежей
 
@@ -765,7 +745,7 @@ static To CastValTo(const ir::Literal *lit)
    - Поддержка внешних программ и модулей
    - Обновление source ranges для корректной работы отладчика
 
-Код хорошо структурирован, но содержит несколько сложных методов с высокой цикломатической сложностью, что отмечено комментариями. Это связано с необходимостью обработки множества особых случаев в системе типов ETS.
+Код хорошо структурирован, но содержит несколько сложных методов с высокой цикломатической сложностью, что отмечено комментариями. Это связано с необходимостью обработки множества особых случаев в системе типов .
 
 Оптимизация unboxing важна для производительности, так как позволяет избежать накладных расходов на работу с объектами-обертками там, где можно использовать примитивные типы напрямую.
 
@@ -776,24 +756,24 @@ static To CastValTo(const ir::Literal *lit)
 
 ### 1. Система типов и анализ возможностей unboxing
 
-Код реализует сложную логику работы с системой типов ETS (Extended TypeScript), включая:
+Код реализует сложную логику работы с системой типов  (Extended TypeScript), включая:
 
 **Типовая иерархия:**
-- Примитивные типы (ETSPrimitiveType): byte, short, int, long, float, double, char, boolean
-- Объекты-обертки (ETSObjectType с флагом BoxedPrimitive)
+- Примитивные типы (PrimitiveType): byte, short, int, long, float, double, char, boolean
+- Объекты-обертки (ObjectType с флагом BoxedPrimitive)
 - Составные типы: массивы, кортежи, объединения
 
 **Ключевые функции анализа:**
 ```cpp
 static bool IsRecursivelyUnboxed(checker::Type *t) {
-    return t->IsETSPrimitiveType() || IsRecursivelyUnboxedReference(t);
+    return t->IsPrimitiveType() || IsRecursivelyUnboxedReference(t);
 }
 
 static bool IsRecursivelyUnboxedReference(checker::Type *t) {
-    return (t->IsETSTupleType() && ...) ||
-           (t->IsETSArrayType() && ...) ||
-           (t->IsETSUnionType() && ...) ||
-           (t->IsETSObjectType() && ...);
+    return (t->IsTupleType() && ...) ||
+           (t->IsArrayType() && ...) ||
+           (t->IsUnionType() && ...) ||
+           (t->IsObjectType() && ...);
 }
 ```
 
@@ -867,7 +847,7 @@ static ir::Expression *InsertBoxing(UnboxContext *uctx, ir::Expression *expr) {
     auto *unboxedType = expr->TsType();
     auto *boxedType = uctx->checker->MaybeBoxType(unboxedType);
     // Создание выражения new BoxedType(unboxedValue)
-    auto *constrCall = ...; // ETSNewClassInstanceExpression
+    auto *constrCall = ...; // NewClassInstanceExpression
     // Поиск подходящего конструктора
     // Настройка типов и сигнатур...
     return constrCall;
@@ -944,7 +924,7 @@ static checker::Type *MaybeRecursivelyUnboxTypeParameter(...) {
     }
     alreadySeen->push_back(t->Id());
     // Рекурсивная обработка constraint-типа
-    auto typeParameter = t->AsETSTypeParameter();
+    auto typeParameter = t->AsTypeParameter();
     auto constraintType = typeParameter->GetConstraintType();
     typeParameter->SetConstraintType(MaybeRecursivelyUnboxReferenceType(uctx, constraintType, alreadySeen));
     return t;
@@ -994,7 +974,7 @@ void VisitCallExpression(ir::CallExpression *call) override {
     }
 
     // 2. Обновление возвращаемого типа
-    if (call->Signature()->ReturnType()->IsETSPrimitiveType()) {
+    if (call->Signature()->ReturnType()->IsPrimitiveType()) {
         call->SetTsType(call->Signature()->ReturnType());
     }
 }
@@ -1004,21 +984,21 @@ void VisitCallExpression(ir::CallExpression *call) override {
 ```
 static ir::Expression *AdjustType(UnboxContext *uctx, ir::Expression *expr, checker::Type *expectedType) {
     // Если выражение — примитив, а ожидается объект → boxing
-    if (expr->TsType()->IsETSPrimitiveType() && expectedType->IsETSObjectType()) {
+    if (expr->TsType()->IsPrimitiveType() && expectedType->IsObjectType()) {
         return InsertBoxing(uctx, expr);
     }
     // Если выражение — boxed-объект, а нужен примитив → unboxing
-    if (TypeIsBoxedPrimitive(expr->TsType()) && expectedType->IsETSPrimitiveType()) {
+    if (TypeIsBoxedPrimitive(expr->TsType()) && expectedType->IsPrimitiveType()) {
         return InsertUnboxing(uctx, expr);
     }
     // Если оба примитива, но разных типов → конверсия (например, int → double)
-    if (expr->TsType()->IsETSPrimitiveType() && expectedType->IsETSPrimitiveType()) {
+    if (expr->TsType()->IsPrimitiveType() && expectedType->IsPrimitiveType()) {
         return InsertPrimitiveConversion(uctx, expr, expectedType);
     }
     return expr;
 }
 ```
-Исходный код (ETS):
+Исходный код ():
 
 let x: Int = 10;  // Integer — boxed-тип
 let y: int = x + 5;   // int — примитив

@@ -23,13 +23,73 @@ int (примитивный) → Int (объектный аналог)
 \subsection{Преобразования типов}
 Для реализации проверки легальности преобразования объектных примитивоподобных типов можно было переиспользовать алгоритм, использовавшийся для проверки преобразований примитивных типов, добавив дополнительные проверки на отношения объектов (Union и Enum).
 Структура функции для проверки корректности преобразования представлена на \ref{fig:cmp}
-\begin{figure}[H]
-    \centering
-    \includegraphics[scale=0.6]{image.png}
-    \caption{Структура функции для проверки корректности преобразования примитивоподобных объектов}
-    \label{fig:cmp}
-\end{figure}
+\subsubsection{Основные функции}
+\textbf{Вычисление ранга типа}
+\begin{lstlisting}[language=C++,caption=GetTypeRank]
+/**
+ * Проверяет допустимость преобразования между упакованными примитивными типами.
+ * Основная идея: проверяет, можно ли безопасно преобразовать один упакованный тип
+ * в другой, переисспользуя алгоритмы проверки преобразований для примитивных типов.
+ */
+bool IsLegalBoxedPrimitiveConversion(Type *target, Type *source) {
+    Checker *checker = this->GetChecker()->AsChecker();
 
+    // Проверка на null
+    if (target == nullptr || source == nullptr) {
+        return false;
+    }
+
+    // Обработка union-типов (особый случай)
+    if (target->IsUnionType() && source->IsObjectType()) {
+        // Получаем базовый примитивный тип для исходного типа
+        Type *sourceUnboxed = checker->MaybeUnboxType(source);
+        if (!sourceUnboxed || !sourceUnboxed->IsPrimitiveType()) {
+            return false;
+        }
+
+        // Ищем упакованный тип в union, который можно распаковать
+        Type *boxedUnionTarget = target->AsUnionType()->FindUnboxableType();
+        if (!boxedUnionTarget) {
+            return false;
+        }
+
+        // Проверяем совместимость базовых примитивных типов
+        Type *targetUnboxed = checker->MaybeUnboxType(boxedUnionTarget);
+        return targetUnboxed && targetUnboxed->IsPrimitiveType() &&
+               this->IsAssignableTo(sourceUnboxed, target);
+    }
+
+    // Оба типа должны быть объектными
+    if (!target->IsObjectType() || !source->IsObjectType()) {
+        return false;
+    }
+
+    // Хотя бы один тип должен быть упакованным примитивом
+    if (!target->AsObjectType()->IsBoxedPrimitive() &&
+        !source->AsObjectType()->IsBoxedPrimitive()) {
+        return false;
+    }
+
+    // Получаем базовые примитивные типы
+    Type *targetUnboxed = checker->MaybeUnboxType(target);
+    Type *sourceUnboxed = checker->MaybeUnboxType(source);
+
+    // Особый случай для int-перечислений
+    if (source->IsIntEnumType()) {
+        targetUnboxed = checker->GlobalIntType();
+    }
+
+    // Проверяем что оба имеют примитивные базовые типы
+    if (!targetUnboxed || !sourceUnboxed ||
+        !targetUnboxed->IsPrimitiveType() ||
+        !sourceUnboxed->IsPrimitiveType()) {
+        return false;
+    }
+
+    // Проверяем совместимость примитивных типов
+    return this->IsAssignableTo(sourceUnboxed, targetUnboxed);
+}
+\end{lstlisting}
 \subsection{Свёртка констант}
 Один из основных этапов работы - это имплементация модуля компиляции для сверки констант в начало стадии семантического анализа.
 Свёртка констант - вычисление константных выражений с последующей заменой выражений на результаты,
@@ -40,7 +100,7 @@ int (примитивный) → Int (объектный аналог)
     \item Позволяет обнаружить ошибки на этапе компиляции
 \end{itemize}
 
-Исплементированный модуль позволяет рекурсивно обойти const и readonly декларации и заменить константные выражения результатом их вычисления.
+Исплементированный модуль позволяет рекурсивно обойти const и readonly декларации и заменить константные выражения результатом их вычисления. Алгоритм свёртки констант реализован по аналогии с классическими методами \cite{aho2007}
 \subsubsection{Основной алгоритм}
 \begin{enumerate}[label={--}]
     \item \textbf{Обход AST} - рекурсивных обход синтаксического дерева программы
@@ -72,7 +132,7 @@ int (примитивный) → Int (объектный аналог)
 \subsubsection*{Типизация и преобразование типов}
 \begin{itemize}[label={--}]
     \item Используется система рангов типов TypeRank для определения приоритета преобразований
-    \item Реализованы безопасные преобразования между типами с проверкой диапазонов
+    \item Реализованы безопасные преобразования между типами с проверкой диапазонов (\cite{krasovsky2022} - Безопасные преобразования типов при свёртке констант требуют проверки диапазонов)
     \item Обработка деления на ноль
 \end{itemize}
 
@@ -89,6 +149,7 @@ enum class TypeRank {
 \end{lstlisting}
 
 \subsubsection{Основные функции}
+\textbf{Вычисление ранга типа}
 \begin{lstlisting}[language=C++,caption=GetTypeRank]
 static TypeRank GetTypeRank(const ir::Literal* lit) {
     if (lit->IsCharLiteral()) {
@@ -102,8 +163,6 @@ static TypeRank GetTypeRank(const ir::Literal* lit) {
     if (num.IsLong()) return TypeRank::INT64;
     if (num.IsFloat()) return TypeRank::FLOAT;
     if (num.IsDouble()) return TypeRank::DOUBLE;
-
-    ES2PANDA_UNREACHABLE();
 }
 \end{lstlisting}
 
@@ -157,8 +216,6 @@ static To CastValTo(const ir::Literal* lit) {
         case TypeRank::CHAR:
             return static_cast<To>(GetVal<char16_t>(lit));
     }
-
-    ES2PANDA_UNREACHABLE();
 }
 \end{lstlisting}
 
@@ -193,7 +250,7 @@ static To CastValTo(const ir::Literal* lit) {
     \item Заново запустить функцию валидации ноды
 \end{enumerate}
 
-
+Подобный подход к преобразованию типов используется в TypeScript \cite{typescript_doc}
 \subsubsection{Обрабатываемые узлы AST}
 Примеры обрабатываемых узлов:
 \begin{itemize}
@@ -220,7 +277,7 @@ void VisitCallExpression(ir::CallExpression *call) override {
     }
 
     // 2. Обновление возвращаемого типа
-    if (call->Signature()->ReturnType()->IsETSPrimitiveType()) {
+    if (call->Signature()->ReturnType()->IsPrimitiveType()) {
         call->SetTsType(call->Signature()->ReturnType());
     }
 }
@@ -233,18 +290,18 @@ static ir::Expression *AdjustType(UnboxContext *uctx,
                                 ir::Expression *expr,
                                 checker::Type *expectedType) {
     // Если выражение — примитив, а ожидается объект → boxing
-    if (expr->TsType()->IsETSPrimitiveType()
-        && expectedType->IsETSObjectType()) {
+    if (expr->TsType()->IsPrimitiveType()
+        && expectedType->IsObjectType()) {
         return InsertBoxing(uctx, expr);
     }
     // Если выражение — boxed-объект, а нужен примитив → unboxing
     if (TypeIsBoxedPrimitive(expr->TsType())
-        && expectedType->IsETSPrimitiveType()) {
+        && expectedType->IsPrimitiveType()) {
         return InsertUnboxing(uctx, expr);
     }
     // Если оба примитива, но разных типов → конверсия
-    if (expr->TsType()->IsETSPrimitiveType()
-        && expectedType->IsETSPrimitiveType()) {
+    if (expr->TsType()->IsPrimitiveType()
+        && expectedType->IsPrimitiveType()) {
         return InsertPrimitiveConversion(uctx, expr, expectedType);
     }
     return expr;
